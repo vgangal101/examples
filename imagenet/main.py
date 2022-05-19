@@ -19,6 +19,11 @@ import torch.utils.data.distributed
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
+from torchvision_resnet import ResNet50
+
+import matplotlib.pyplot as plt
+import logging
+import datetime
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
@@ -62,7 +67,7 @@ parser.add_argument('--world-size', default=-1, type=int,
                     help='number of nodes for distributed training')
 parser.add_argument('--rank', default=-1, type=int,
                     help='node rank for distributed training')
-parser.add_argument('--dist-url', default='tcp://224.66.41.62:23456', type=str,
+parser.add_argument('--dist-url', default='tcp://0.0.0.0:23456', type=str,
                     help='url used to set up distributed training')
 parser.add_argument('--dist-backend', default='nccl', type=str,
                     help='distributed backend')
@@ -79,9 +84,67 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
 best_acc1 = 0
 
 
+def plot_graphs(args,track_train_acc,track_val_top1_acc,track_val_top5_acc,track_val_loss,track_train_loss):
+
+#     print(f'track_train_loss={track_train_loss},type={type(track_train_loss)}')
+#     print(f'track_train_acc={track_train_acc},type={type(track_train_acc)}')
+#     print(f'track_val_loss={track_val_loss},type={type(track_val_loss)}')
+#     print(f'track_val_top1_acc={val_top1_acc},type={type(val_top1_acc)}')
+#     print(f'track_val_top5_acc={val_top1_acc},type={type(val_top5_acc)}')
+    
+    
+    
+    accuracy = track_train_acc
+    val_accuracy = track_val_top1_acc
+    top5_acc = track_val_top5_acc
+    
+#     print(accuracy)
+#     print(type(accuracy))
+    
+    plt.figure()
+    plt.title("Epoch vs Accuracy")
+    plt.plot(accuracy,label='training accuracy')
+    plt.plot(val_accuracy,label='val_accuracy')
+    plt.plot(top5_acc,label='top5 accuracy')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.legend(loc='lower right')
+
+
+    viz_file = 'accuracy_graph_' + args.dataset.lower() + '_' + args.model.lower() + '_bs' + str(args.batch_size) + '_epochs' + str(args.num_epochs) + '.png'
+    plt.savefig(viz_file)
+    plt.show()
+
+
+    print('track_train_loss=',track_train_loss)
+    print('track_val_loss=',track_val_loss)
+    
+    plt.figure()
+    plt.title("Epoch vs Loss")
+    plt.plot(track_train_loss,label='training loss')
+    plt.plot(track_val_loss,label='val_loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend(loc='lower right')
+
+    viz_file2 = 'loss_graph_' + args.dataset.lower() + '_' + args.model.lower() + '_bs' + str(args.batch_size) + '_epochs' + str(args.num_epochs) + '.png'
+    plt.savefig(viz_file2)
+    plt.show()
+
+def process_input(x):
+    if isinstance(x,torch.Tensor):
+        tmp = x.cpu().item()
+        return tmp
+    else: 
+        return x 
+
+
+
+
 def main():
     args = parser.parse_args()
 
+    
     if args.seed is not None:
         random.seed(args.seed)
         torch.manual_seed(args.seed)
@@ -117,7 +180,8 @@ def main():
 def main_worker(gpu, ngpus_per_node, args):
     global best_acc1
     args.gpu = gpu
-
+    
+    
     if args.gpu is not None:
         print("Use GPU: {} for training".format(args.gpu))
 
@@ -131,13 +195,15 @@ def main_worker(gpu, ngpus_per_node, args):
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                 world_size=args.world_size, rank=args.rank)
     # create model
-    if args.pretrained:
-        print("=> using pre-trained model '{}'".format(args.arch))
-        model = models.__dict__[args.arch](pretrained=True)
-    else:
-        print("=> creating model '{}'".format(args.arch))
-        model = models.__dict__[args.arch]()
+    # if args.pretrained:
+    #     print("=> using pre-trained model '{}'".format(args.arch))
+    #     model = models.__dict__[args.arch](pretrained=True)
+    # else:
+    #     print("=> creating model '{}'".format(args.arch))
+    #     model = models.__dict__[args.arch]()
 
+    model = ResNet50(1000)
+    
     if not torch.cuda.is_available():
         print('using CPU, this will be slow')
     elif args.distributed:
@@ -242,16 +308,23 @@ def main_worker(gpu, ngpus_per_node, args):
         validate(val_loader, model, criterion, args)
         return
 
+    track_train_loss = []
+    track_train_acc = []
+    track_val_loss = []
+    track_val_top1_acc = []
+    track_val_top5_acc = []
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
 
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch, args)
+        train_loss, train_acc = train(train_loader, model, criterion, optimizer, epoch, args)
 
         # evaluate on validation set
-        acc1 = validate(val_loader, model, criterion, args)
+        val_loss, val_top1_acc, val_top5_acc = validate(val_loader, model, criterion, args)
         
+        
+        logging.info(f'epoch={epoch} train_loss={train_loss} train_acc={train_acc} val_loss={val_loss} val_top1_acc={val_top1_acc} val_top5_acc={val_top5_acc}')
         scheduler.step()
 
         
@@ -259,6 +332,13 @@ def main_worker(gpu, ngpus_per_node, args):
         is_best = acc1 > best_acc1
         best_acc1 = max(acc1, best_acc1)
 
+        track_train_loss.append(process_input(train_loss))
+        track_train_acc.append(process_input(train_acc))
+        track_val_loss.append(process_input(val_loss))
+        track_val_top1_acc.append(process_input(val_top1_acc))
+        track_val_top5_acc.append(process_input(val_top5_acc))
+
+        
         if not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0):
             save_checkpoint({
@@ -269,6 +349,8 @@ def main_worker(gpu, ngpus_per_node, args):
                 'optimizer' : optimizer.state_dict(),
                 'scheduler' : scheduler.state_dict()
             }, is_best)
+    
+    plot_graphs(track_train_acc,track_val_top1_acc,track_val_top5_acc,track_val_loss,track_train_loss)
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
@@ -316,6 +398,8 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
         if i % args.print_freq == 0:
             progress.display(i)
+    
+    return losses.avg, top1.avg
 
 
 def validate(val_loader, model, criterion, args):
@@ -358,7 +442,7 @@ def validate(val_loader, model, criterion, args):
 
         progress.display_summary()
 
-    return top1.avg
+    return losses.avg, top1.avg, top5.avg
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
