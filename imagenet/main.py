@@ -78,8 +78,47 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
                          'fastest way to use PyTorch for either single node or '
                          'multi node data parallel training')
 
-best_acc1 = 0
 
+
+def plot_graphs(args,track_train_acc,track_val_top1_acc,track_val_top5_acc,track_val_loss,track_train_loss):
+
+    accuracy = track_train_acc
+    val_accuracy = track_val_top1_acc
+    top5_acc = track_val_top5_acc
+    plt.figure()
+    plt.title("Epoch vs Accuracy")
+    plt.plot(accuracy,label='training accuracy')
+    plt.plot(val_accuracy,label='val_accuracy')
+    plt.plot(top5_acc,label='val top5 accuracy')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.legend(loc='lower right')
+
+
+    viz_file = 'accuracy_graph_' + args.dataset.lower() + '_' + args.model.lower() + '_bs' + str(args.batch_size) + '_epochs' + str(args.num_epochs) + '.png'
+    plt.savefig(viz_file)
+    plt.show()
+
+
+    plt.figure()
+    plt.title("Epoch vs Loss")
+    plt.plot(track_train_loss,label='training loss')
+    plt.plot(track_val_loss,label='val_loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend(loc='lower right')
+
+    viz_file2 = 'loss_graph_' + args.dataset.lower() + '_' + args.model.lower() + '_bs' + str(args.batch_size) + '_epochs' + str(args.num_epochs) + '.png'
+    plt.savefig(viz_file2)
+    plt.show()
+
+def process_vals(x):
+    if isinstance(x,torch.Tensor):
+        return x.cpu().detach().item()
+    else:
+        return x
+
+best_acc1 = 0
 
 def main():
     args = parser.parse_args()
@@ -141,7 +180,7 @@ def main_worker(gpu, ngpus_per_node, args):
     #     model = models.__dict__[args.arch]()
 
     model = ResNet50(1000)
-    
+
     if not torch.cuda.is_available():
         print('using CPU, this will be slow')
     elif args.distributed:
@@ -179,10 +218,10 @@ def main_worker(gpu, ngpus_per_node, args):
     optimizer = torch.optim.SGD(model.parameters(), args.lr,
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
-    
+
     """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
     scheduler = StepLR(optimizer, step_size=30, gamma=0.1)
-    
+
     # optionally resume from a checkpoint
     if args.resume:
         if os.path.isfile(args.resume):
@@ -246,19 +285,27 @@ def main_worker(gpu, ngpus_per_node, args):
         validate(val_loader, model, criterion, args)
         return
 
+
+
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
 
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch, args)
+        train_loss, train_acc, train_top5acc = train(train_loader, model, criterion, optimizer, epoch, args)
 
         # evaluate on validation set
-        acc1 = validate(val_loader, model, criterion, args)
-        
+        val_loss, val_top1_acc, val_top5_acc = validate(val_loader, model, criterion, args)
+
+        track_train_loss.append(process_vals(train_loss))
+        track_train_acc.append(process_vals(train_acc))
+        track_val_loss.append(process_vals(val_loss))
+        track_val_top1_acc.append(process_vals(val_top1_acc))
+        track_val_top5_acc.append(process_vals(val_top5_acc))
+
         scheduler.step()
 
-        
+
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
         best_acc1 = max(acc1, best_acc1)
@@ -273,6 +320,7 @@ def main_worker(gpu, ngpus_per_node, args):
                 'optimizer' : optimizer.state_dict(),
                 'scheduler' : scheduler.state_dict()
             }, is_best)
+            plot_graphs(args,track_train_acc,track_val_top1_acc,track_val_top5_acc,track_val_loss,track_train_loss)
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
@@ -321,6 +369,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         if i % args.print_freq == 0:
             progress.display(i)
 
+    return losses.avg, top1.avg, top5.avg
 
 def validate(val_loader, model, criterion, args):
     batch_time = AverageMeter('Time', ':6.3f', Summary.NONE)
@@ -362,7 +411,7 @@ def validate(val_loader, model, criterion, args):
 
         progress.display_summary()
 
-    return top1.avg
+    return losses.avg, top1.avg, top5.avg
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
@@ -399,7 +448,7 @@ class AverageMeter(object):
     def __str__(self):
         fmtstr = '{name} {val' + self.fmt + '} ({avg' + self.fmt + '})'
         return fmtstr.format(**self.__dict__)
-    
+
     def summary(self):
         fmtstr = ''
         if self.summary_type is Summary.NONE:
@@ -412,7 +461,7 @@ class AverageMeter(object):
             fmtstr = '{name} {count:.3f}'
         else:
             raise ValueError('invalid summary type %r' % self.summary_type)
-        
+
         return fmtstr.format(**self.__dict__)
 
 
@@ -426,7 +475,7 @@ class ProgressMeter(object):
         entries = [self.prefix + self.batch_fmtstr.format(batch)]
         entries += [str(meter) for meter in self.meters]
         print('\t'.join(entries))
-        
+
     def display_summary(self):
         entries = [" *"]
         entries += [meter.summary() for meter in self.meters]
