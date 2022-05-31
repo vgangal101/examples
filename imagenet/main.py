@@ -21,6 +21,8 @@ import torchvision.datasets as datasets
 import torchvision.models as models
 #from torchvision_resnet import ResNet50
 from model_arch2 import ResNet50
+import matplotlib.pyplot as plt
+
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
@@ -79,6 +81,8 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
                          'multi node data parallel training')
 
 
+best_acc1 = 0
+
 
 def plot_graphs(args,track_train_acc,track_val_top1_acc,track_val_top5_acc,track_val_loss,track_train_loss):
 
@@ -95,7 +99,7 @@ def plot_graphs(args,track_train_acc,track_val_top1_acc,track_val_top5_acc,track
     plt.legend(loc='lower right')
 
 
-    viz_file = 'accuracy_graph_' + args.dataset.lower() + '_' + args.model.lower() + '_bs' + str(args.batch_size) + '_epochs' + str(args.num_epochs) + '.png'
+    viz_file = 'accuracy_graph_' + 'imagenet' + '_' + args.model.lower() + '_bs' + str(args.batch_size) + '_epochs' + str(args.num_epochs) + '.png'
     plt.savefig(viz_file)
     plt.show()
 
@@ -108,7 +112,7 @@ def plot_graphs(args,track_train_acc,track_val_top1_acc,track_val_top5_acc,track
     plt.ylabel('Loss')
     plt.legend(loc='lower right')
 
-    viz_file2 = 'loss_graph_' + args.dataset.lower() + '_' + args.model.lower() + '_bs' + str(args.batch_size) + '_epochs' + str(args.num_epochs) + '.png'
+    viz_file2 = 'loss_graph_' + 'imagenet' + '_' + args.model.lower() + '_bs' + str(args.batch_size) + '_epochs' + str(args.num_epochs) + '.png'
     plt.savefig(viz_file2)
     plt.show()
 
@@ -117,8 +121,6 @@ def process_vals(x):
         return x.cpu().detach().item()
     else:
         return x
-
-best_acc1 = 0
 
 def main():
     args = parser.parse_args()
@@ -286,7 +288,12 @@ def main_worker(gpu, ngpus_per_node, args):
         return
 
 
-
+    track_train_loss = []
+    track_train_acc = []
+    track_val_loss = []
+    track_val_top1_acc = []
+    track_val_top5_acc = []
+    
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
@@ -307,8 +314,8 @@ def main_worker(gpu, ngpus_per_node, args):
 
 
         # remember best acc@1 and save checkpoint
-        is_best = acc1 > best_acc1
-        best_acc1 = max(acc1, best_acc1)
+        is_best = val_top1_acc > best_acc1
+        best_acc1 = max(val_top1_acc, best_acc1)
 
         if not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0):
@@ -320,7 +327,9 @@ def main_worker(gpu, ngpus_per_node, args):
                 'optimizer' : optimizer.state_dict(),
                 'scheduler' : scheduler.state_dict()
             }, is_best)
-            plot_graphs(args,track_train_acc,track_val_top1_acc,track_val_top5_acc,track_val_loss,track_train_loss)
+    
+    if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
+        plot_graphs(args,track_train_acc,track_val_top1_acc,track_val_top5_acc,track_val_loss,track_train_loss)
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
