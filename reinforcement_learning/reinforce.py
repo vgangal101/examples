@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Categorical
-
+import matplotlib.pyplot as plt
 
 parser = argparse.ArgumentParser(description='PyTorch REINFORCE example')
 parser.add_argument('--gamma', type=float, default=0.99, metavar='G',
@@ -49,6 +49,18 @@ policy = Policy()
 optimizer = optim.Adam(policy.parameters(), lr=1e-2)
 eps = np.finfo(np.float32).eps.item()
 
+def plot_results(training_perf):
+    
+    # plot the rewards
+    fig, ax = plt.subplots()
+    #training_perf_x = [i for i in range(len(training_perf))]
+    #evaluate_perf_x = [i for i in range(len(evaluate_perf))]
+    ax.plot(training_perf,'b',label='training rewards')
+    #ax.plot(evaluate_perf,'r',label='evaluation rewards')
+    ax.legend()
+    plt.savefig('rewards_over_training_eval.png')
+
+
 
 def select_action(state):
     state = torch.from_numpy(state).float().unsqueeze(0)
@@ -65,9 +77,16 @@ def finish_episode():
     returns = []
     for r in policy.rewards[::-1]:
         R = r + args.gamma * R
+        #returns.append(R)
         returns.insert(0, R)
+    
+
+    # for r in policy.rewards:
+    #     R = r + args.gamma * R 
+    #     returns.append(R)
+    
     returns = torch.tensor(returns)
-    returns = (returns - returns.mean()) / (returns.std() + eps)
+    #returns = (returns - returns.mean()) / (returns.std() + eps)
     for log_prob, R in zip(policy.saved_log_probs, returns):
         policy_loss.append(-log_prob * R)
     optimizer.zero_grad()
@@ -78,8 +97,26 @@ def finish_episode():
     del policy.saved_log_probs[:]
 
 
+def evaluate(env,num_episodes):
+    rewards_perf = []
+    for i in range(num_episodes):
+        obs = env.reset()
+        done = False 
+        episode_reward = 0 
+        while not done:
+            with torch.no_grad():
+                action = select_action(obs)
+            next_obs, done, reward, info = env.step(action)
+            episode_reward += reward 
+            obs = next_obs  
+        rewards_perf.append(episode_reward)
+    
+    return sum(rewards_perf) / len(rewards_perf)
+
 def main():
+    prev_episode_rewards = []
     running_reward = 10
+   # eval_rewards = []
     for i_episode in count(1):
         state, ep_reward = env.reset(), 0
         for t in range(1, 10000):  # Don't infinite loop while learning
@@ -91,16 +128,20 @@ def main():
             ep_reward += reward
             if done:
                 break
-
+        prev_episode_rewards.append(ep_reward)
         running_reward = 0.05 * ep_reward + (1 - 0.05) * running_reward
         finish_episode()
         if i_episode % args.log_interval == 0:
             print('Episode {}\tLast reward: {:.2f}\tAverage reward: {:.2f}'.format(
                   i_episode, ep_reward, running_reward))
+            #eval_reward_perf = evaluate(env,10)
+            #eval_rewards.append(eval_reward_perf)
         if running_reward > env.spec.reward_threshold:
             print("Solved! Running reward is now {} and "
                   "the last episode runs to {} time steps!".format(running_reward, t))
             break
+        #plot_results(prev_episode_rewards,eval_rewards)
+
 
 
 if __name__ == '__main__':
